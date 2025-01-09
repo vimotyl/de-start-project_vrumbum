@@ -69,14 +69,17 @@ CREATE TABLE car_shop.clients(
 );
 
 CREATE TABLE car_shop.origin(
-	country VARCHAR(50) PRIMARY KEY    /* наименование страны, 50 символов достаточно */
+	id SERIAL PRIMARY KEY,         /* добавила суррогатный первичный ключ */
+	country VARCHAR(50)            /* наименование страны, 50 символов достаточно */
 );
 
 CREATE TABLE car_shop.brands(
-	name VARCHAR(50) PRIMARY KEY,      /* наименование бренда, 50 символов достаточно */
+	id SERIAL PRIMARY KEY,         /* добавила суррогатный первичный ключ */
+
+	name VARCHAR(50),              /* наименование бренда, 50 символов достаточно */
 	
-	brand_origin VARCHAR(50)           /* наименование страны, 50 символов достаточно */
-		REFERENCES car_shop.origin(country) ON DELETE SET NULL   /* внешний ключ, при удалении страны из родительской
+	origin_id INT           
+		REFERENCES car_shop.origin(id) ON DELETE SET NULL        /* внешний ключ, при удалении страны из родительской
 																    таблицы заполняем значением NULL, так как это доп.информация */
 );
 
@@ -86,8 +89,8 @@ CREATE TABLE car_shop.models(
 	
 	name VARCHAR(50) NOT NULL UNIQUE,      /* название модели авто, 50 символов достаточно, обязательно заполнять, должно быть уникальным */
 	
-	brand_name VARCHAR(50)                 /* наименование бренда, 50 символов достаточно */
-		REFERENCES car_shop.brands(name) ON DELETE RESTRICT,   /* внешний ключ, запрет на удаление бренда из родительской таблицы, 
+	brand_id INT                 
+		REFERENCES car_shop.brands(id) ON DELETE RESTRICT,   /* внешний ключ, запрет на удаление бренда из родительской таблицы, 
 																  так как модель авто без бренда не может существовать */   
 		
 	is_electric_car BOOL DEFAULT FALSE,    /* является ли электромобилем, по умолчанию FALSE, так как обычных авто больше, чем электро */
@@ -97,7 +100,8 @@ CREATE TABLE car_shop.models(
 );
 
 CREATE TABLE car_shop.colors(
-	name VARCHAR(50) PRIMARY KEY           /* название цвета, 50 символов достаточно */
+	id SERIAL PRIMARY KEY,         /* добавила суррогатный первичный ключ */
+	name VARCHAR(50)               /* название цвета, 50 символов достаточно */
 );
 
 
@@ -108,8 +112,8 @@ CREATE TABLE car_shop.cars(
 		REFERENCES car_shop.models(id) ON DELETE RESTRICT,    /* внешний ключ, запрет на удаление модели из родительской таблицы,
 																 так как авто без указания модели не может существовать */ 
 		
-	color_name VARCHAR(50)                                    /* название цвета, 50 символов достаточно */
-		REFERENCES car_shop.colors(name) ON DELETE RESTRICT   /* внешний ключ, запрет на удаление цвета из родительской таблицы,
+	color_id INT                                    
+		REFERENCES car_shop.colors(id) ON DELETE RESTRICT     /* внешний ключ, запрет на удаление цвета из родительской таблицы,
 																 так как авто без указания цвета не может существовать */
 );
 
@@ -190,31 +194,33 @@ INSERT INTO car_shop.origin (country)
 
 
 -- brands
-INSERT INTO car_shop.brands (name, brand_origin) 
-	(SELECT DISTINCT brand, brand_origin 
-	FROM raw_data.sales);
+INSERT INTO car_shop.brands (name, origin_id) 
+	(SELECT DISTINCT s.brand, o.id 
+	FROM raw_data.sales s
+	LEFT JOIN car_shop.origin o ON s.brand_origin = o.country);
 
 
 -- models
-INSERT INTO car_shop.models (name, brand_name, is_electric_car, gasoline_consumption)
+INSERT INTO car_shop.models (name, brand_id, is_electric_car, gasoline_consumption)
 	(SELECT
-		DISTINCT model, 
-		brand,
+		DISTINCT s.model, 
+		b.id,
 		CASE
-			WHEN (gasoline_consumption IS NULL) OR (gasoline_consumption = 0)
+			WHEN (s.gasoline_consumption IS NULL) OR (s.gasoline_consumption = 0)
 			THEN TRUE
 			ELSE FALSE
 		END electric,
-		gasoline_consumption
-	FROM raw_data.sales
-	ORDER BY model);
+		s.gasoline_consumption
+	FROM raw_data.sales s
+	LEFT JOIN car_shop.brands b ON s.brand = b.name
+	ORDER BY s.model);
 
 
 -- cars
-INSERT INTO car_shop.cars (model_id, color_name)
+INSERT INTO car_shop.cars (model_id, color_id)
 	(SELECT
-		DISTINCT m.id,
-		c.name
+		DISTINCT m.id AS model_id,
+		c.id AS color_id
 	FROM raw_data.sales AS s
 	JOIN car_shop.models AS m ON s.model = m.name
 	JOIN car_shop.colors AS c ON s.color = c.name
@@ -243,7 +249,7 @@ INSERT INTO car_shop.orders (order_date, client_id, car_id, price, discount_perc
 	JOIN car_shop.clients AS cl ON s.person_name = cl.service_person_name
 	JOIN car_shop.models AS m ON s.model = m.name
 	JOIN car_shop.colors AS col ON s.color = col.name
-	JOIN car_shop.cars AS cr ON cr.model_id = m.id AND cr.color_name = col.name
+	JOIN car_shop.cars AS cr ON cr.model_id = m.id AND cr.color_id = col.id
 );
 
 
@@ -324,7 +330,7 @@ SELECT
 	END AS price_avg
 FROM GENERATE_SERIES(2015, 2023, 1) AS current_year
 CROSS JOIN car_shop.brands b 
-LEFT JOIN car_shop.models m ON m.brand_name = b.name
+LEFT JOIN car_shop.models m ON m.brand_id = b.id
 LEFT JOIN car_shop.cars c ON m.id = c.model_id
 LEFT JOIN car_shop.orders o ON current_year = EXTRACT(YEAR FROM o.order_date) AND c.id = o.car_id
 GROUP BY b.name, current_year
@@ -350,11 +356,12 @@ ORDER BY month;
  * список купленных машин у каждого пользователя */
 SELECT
 	(c.first_name || ' ' || c.last_name) AS person,
-	STRING_AGG(m.brand_name || ' ' || m.name, ', ') AS cars
+	STRING_AGG(b.name || ' ' || m.name, ', ') AS cars
 FROM car_shop.orders o
 JOIN car_shop.clients c ON o.client_id = c.id
 JOIN car_shop.cars cr ON o.car_id = cr.id
 JOIN car_shop.models m ON cr.model_id = m.id
+JOIN car_shop.brands b ON m.brand_id = b.id
 GROUP BY o.client_id, person
 ORDER BY person ASC;
 
@@ -363,15 +370,16 @@ ORDER BY person ASC;
 /* ВЫБОРКА 5
  * самая большая и самая маленькая цена продажи автомобиля с разбивкой по стране без учёта скидки */
 SELECT
-	b.brand_origin,
+	orig.country,
 	MAX(price) AS price_max,
 	MIN(price) AS price_min
 FROM car_shop.orders o
 JOIN car_shop.cars cr ON o.car_id = cr.id
 JOIN car_shop.models m ON cr.model_id = m.id
-JOIN car_shop.brands b ON m.brand_name = b.name
-WHERE b.brand_origin IS NOT NULL
-GROUP BY b.brand_origin;
+JOIN car_shop.brands b ON m.brand_id = b.id
+JOIN car_shop.origin orig ON orig.id = b.origin_id
+WHERE orig.country IS NOT NULL
+GROUP BY orig.country;
 
 
 
