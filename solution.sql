@@ -7,9 +7,9 @@
  * Создали схему raw_data и таблицу sales
  * для загрузки сырых данных из файла */
 
-CREATE SCHEMA raw_data;
+CREATE SCHEMA IF NOT EXISTS raw_data;
 
-CREATE TABLE raw_data.sales(
+CREATE TABLE IF NOT EXISTS raw_data.sales(
 	id smallint,
 	auto text,
 	gasoline_consumption real,
